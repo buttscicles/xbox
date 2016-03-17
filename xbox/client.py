@@ -79,6 +79,17 @@ class Client(object):
         kw['data'] = data
         return self._post(url, **kw)
 
+    def WindowsLiveTokenRefresh(self, refresh_token):
+        base_url = 'https://login.live.com/oauth20_token.srf?'
+        qs = unquote(urlencode({
+            'grant_type': 'refresh_token',
+            'client_id': '0000000048093EE3',
+            'scope': 'service::user.auth.xboxlive.com::MBI_SSL',
+            'refresh_token': refresh_token,
+        }))
+        resp = self.session.get(base_url + qs)
+        return resp
+
     def WindowsLiveRequest(self, login, password):
         # firstly we have to GET the login page and extract
         # certain data we need to include in our POST request.
@@ -194,6 +205,7 @@ class Client(object):
         parsed = urlparse(location)
         fragment = parse_qs(parsed.fragment)
         access_token = fragment['access_token'][0]
+        live_refresh_token = fragment['refresh_token'][0]
 
         resp = self.XboxLiveAuthenticateRequest(access_token)
 
@@ -205,7 +217,18 @@ class Client(object):
 
         response = resp.json()
         self.AUTHORIZATION_HEADER = 'XBL3.0 x=%s;%s' % (uhs, response['Token'])
+        self.live_refresh_token = live_refresh_token
         self.user_xid = response['DisplayClaims']['xui'][0]['xid']
+        self.user_hash = uhs
+
+        self.user_token = user_token
+        self.user_issued = json_data['IssueInstant']
+        self.user_valid_until = json_data['NotAfter']
+
+        self.xsts_token = response['Token']
+        self.xsts_issued = response['IssueInstant']
+        self.xsts_valid_until = response['NotAfter']
+
         self.authenticated = True
         return self
 
