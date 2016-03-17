@@ -79,37 +79,7 @@ class Client(object):
         kw['data'] = data
         return self._post(url, **kw)
 
-    def authenticate(self, login=None, password=None):
-        '''
-        Authenticated this client instance.
-
-        ``login`` and ``password`` default to the environment
-        variables ``MS_LOGIN`` and ``MS_PASSWD`` respectively.
-
-
-        :param login: Email address associated with a microsoft account
-        :param password: Matching password
-
-        :raises: :class:`~xbox.exceptions.AuthenticationException`
-
-        :returns: Instance of :class:`~xbox.Client`
-
-        '''
-        if login is None:
-            login = os.environ.get('MS_LOGIN')
-
-        if password is None:
-            password = os.environ.get('MS_PASSWD')
-
-        if not login or not password:
-            msg = (
-                'Authentication credentials required. Please refer to '
-                'http://xbox.readthedocs.org/en/latest/authentication.html'
-            )
-            raise AuthenticationException(msg)
-
-        self.login = login
-
+    def WindowsLiveRequest(self, login, password):
         # firstly we have to GET the login page and extract
         # certain data we need to include in our POST request.
         # sadly the data is locked away in some javascript code
@@ -154,6 +124,65 @@ class Client(object):
         resp = self.session.post(
             login_post_url, data=post_data, allow_redirects=False,
         )
+        return resp
+
+    def XboxLiveAuthenticateRequest(self, access_token):
+        url = 'https://user.auth.xboxlive.com/user/authenticate'
+        resp = self.session.post(url, data=json.dumps({
+            "RelyingParty": "http://auth.xboxlive.com",
+            "TokenType": "JWT",
+            "Properties": {
+                "AuthMethod": "RPS",
+                "SiteName": "user.auth.xboxlive.com",
+                "RpsTicket": access_token,
+            }
+        }), headers={'Content-Type': 'application/json'})
+        return resp
+
+    def XboxLiveAuthorizeRequest(self, user_token):
+        url = 'https://xsts.auth.xboxlive.com/xsts/authorize'
+        resp = self.session.post(url, data=json.dumps({
+            "RelyingParty": "http://xboxlive.com",
+            "TokenType": "JWT",
+            "Properties": {
+                "UserTokens": [user_token],
+                "SandboxId": "RETAIL",
+            }
+        }), headers={'Content-Type': 'application/json'})
+        return resp
+
+    def authenticate(self, login=None, password=None):
+        '''
+        Authenticated this client instance.
+
+        ``login`` and ``password`` default to the environment
+        variables ``MS_LOGIN`` and ``MS_PASSWD`` respectively.
+
+
+        :param login: Email address associated with a microsoft account
+        :param password: Matching password
+
+        :raises: :class:`~xbox.exceptions.AuthenticationException`
+
+        :returns: Instance of :class:`~xbox.Client`
+
+        '''
+        if login is None:
+            login = os.environ.get('MS_LOGIN')
+
+        if password is None:
+            password = os.environ.get('MS_PASSWD')
+
+        if not login or not password:
+            msg = (
+                'Authentication credentials required. Please refer to '
+                'http://xbox.readthedocs.org/en/latest/authentication.html'
+            )
+            raise AuthenticationException(msg)
+
+        self.login = login
+
+        resp = self.WindowsLiveRequest(login, password)
 
         if 'Location' not in resp.headers:
             # we can only assume the login failed
@@ -166,30 +195,13 @@ class Client(object):
         fragment = parse_qs(parsed.fragment)
         access_token = fragment['access_token'][0]
 
-        url = 'https://user.auth.xboxlive.com/user/authenticate'
-        resp = self.session.post(url, data=json.dumps({
-            "RelyingParty": "http://auth.xboxlive.com",
-            "TokenType": "JWT",
-            "Properties": {
-                "AuthMethod": "RPS",
-                "SiteName": "user.auth.xboxlive.com",
-                "RpsTicket": access_token,
-            }
-        }), headers={'Content-Type': 'application/json'})
+        resp = self.XboxLiveAuthenticateRequest(access_token)
 
         json_data = resp.json()
         user_token = json_data['Token']
         uhs = json_data['DisplayClaims']['xui'][0]['uhs']
 
-        url = 'https://xsts.auth.xboxlive.com/xsts/authorize'
-        resp = self.session.post(url, data=json.dumps({
-            "RelyingParty": "http://xboxlive.com",
-            "TokenType": "JWT",
-            "Properties": {
-                "UserTokens": [user_token],
-                "SandboxId": "RETAIL",
-            }
-        }), headers={'Content-Type': 'application/json'})
+        resp = self.XboxLiveAuthorizeRequest(user_token)
 
         response = resp.json()
         self.AUTHORIZATION_HEADER = 'XBL3.0 x=%s;%s' % (uhs, response['Token'])
