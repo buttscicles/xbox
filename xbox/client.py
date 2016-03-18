@@ -79,37 +79,33 @@ class Client(object):
         kw['data'] = data
         return self._post(url, **kw)
 
-    def authenticate(self, login=None, password=None):
+    def WindowsLiveTokenRefresh(self, refresh_token):
         '''
-        Authenticated this client instance.
+        Refreshes the Windows Live Token
+        
+        :param refresh_token: Refresh Token from a previous Windows Live Auth
 
-        ``login`` and ``password`` default to the environment
-        variables ``MS_LOGIN`` and ``MS_PASSWD`` respectively.
-
-
-        :param login: Email address associated with a microsoft account
-        :param password: Matching password
-
-        :raises: :class:`~xbox.exceptions.AuthenticationException`
-
-        :returns: Instance of :class:`~xbox.Client`
-
+        :returns: The request-response of HTTP-GET
         '''
-        if login is None:
-            login = os.environ.get('MS_LOGIN')
+        base_url = 'https://login.live.com/oauth20_token.srf?'
+        qs = unquote(urlencode({
+            'grant_type': 'refresh_token',
+            'client_id': '0000000048093EE3',
+            'scope': 'service::user.auth.xboxlive.com::MBI_SSL',
+            'refresh_token': refresh_token,
+        }))
+        resp = self.session.get(base_url + qs)
+        return resp
 
-        if password is None:
-            password = os.environ.get('MS_PASSWD')
+    def WindowsLiveRequest(self, login, password):
+        '''
+        Authenticates with Windows Live
+        
+        :param login: Microsoft account email-address
+        :param password: corresponding password
 
-        if not login or not password:
-            msg = (
-                'Authentication credentials required. Please refer to '
-                'http://xbox.readthedocs.org/en/latest/authentication.html'
-            )
-            raise AuthenticationException(msg)
-
-        self.login = login
-
+        :returns: The response of HTTP-POST
+        '''
         # firstly we have to GET the login page and extract
         # certain data we need to include in our POST request.
         # sadly the data is locked away in some javascript code
@@ -154,6 +150,79 @@ class Client(object):
         resp = self.session.post(
             login_post_url, data=post_data, allow_redirects=False,
         )
+        return resp
+
+    def XboxLiveAuthenticateRequest(self, access_token):
+        '''
+        Authenticates with Xbox Live
+        
+        :param access_token: Token from the WindowsLiveAuthentication
+
+        :returns: The response of HTTP-POST
+        '''
+        url = 'https://user.auth.xboxlive.com/user/authenticate'
+        resp = self.session.post(url, data=json.dumps({
+            "RelyingParty": "http://auth.xboxlive.com",
+            "TokenType": "JWT",
+            "Properties": {
+                "AuthMethod": "RPS",
+                "SiteName": "user.auth.xboxlive.com",
+                "RpsTicket": access_token,
+            }
+        }), headers={'Content-Type': 'application/json'})
+        return resp
+
+    def XboxLiveAuthorizeRequest(self, user_token):
+        '''
+        Authorizes with Xbox Live
+        
+        :param user_token: Token from the XboxLiveAuthentication
+
+        :returns: The response of HTTP-POST
+        '''
+        url = 'https://xsts.auth.xboxlive.com/xsts/authorize'
+        resp = self.session.post(url, data=json.dumps({
+            "RelyingParty": "http://xboxlive.com",
+            "TokenType": "JWT",
+            "Properties": {
+                "UserTokens": [user_token],
+                "SandboxId": "RETAIL",
+            }
+        }), headers={'Content-Type': 'application/json'})
+        return resp
+
+    def authenticate(self, login=None, password=None):
+        '''
+        Authenticated this client instance.
+
+        ``login`` and ``password`` default to the environment
+        variables ``MS_LOGIN`` and ``MS_PASSWD`` respectively.
+
+
+        :param login: Email address associated with a microsoft account
+        :param password: Matching password
+
+        :raises: :class:`~xbox.exceptions.AuthenticationException`
+
+        :returns: Instance of :class:`~xbox.Client`
+
+        '''
+        if login is None:
+            login = os.environ.get('MS_LOGIN')
+
+        if password is None:
+            password = os.environ.get('MS_PASSWD')
+
+        if not login or not password:
+            msg = (
+                'Authentication credentials required. Please refer to '
+                'http://xbox.readthedocs.org/en/latest/authentication.html'
+            )
+            raise AuthenticationException(msg)
+
+        self.login = login
+
+        resp = self.WindowsLiveRequest(login, password)
 
         if 'Location' not in resp.headers:
             # we can only assume the login failed
@@ -165,35 +234,30 @@ class Client(object):
         parsed = urlparse(location)
         fragment = parse_qs(parsed.fragment)
         access_token = fragment['access_token'][0]
+        live_refresh_token = fragment['refresh_token'][0]
 
-        url = 'https://user.auth.xboxlive.com/user/authenticate'
-        resp = self.session.post(url, data=json.dumps({
-            "RelyingParty": "http://auth.xboxlive.com",
-            "TokenType": "JWT",
-            "Properties": {
-                "AuthMethod": "RPS",
-                "SiteName": "user.auth.xboxlive.com",
-                "RpsTicket": access_token,
-            }
-        }), headers={'Content-Type': 'application/json'})
+        resp = self.XboxLiveAuthenticateRequest(access_token)
 
         json_data = resp.json()
         user_token = json_data['Token']
         uhs = json_data['DisplayClaims']['xui'][0]['uhs']
 
-        url = 'https://xsts.auth.xboxlive.com/xsts/authorize'
-        resp = self.session.post(url, data=json.dumps({
-            "RelyingParty": "http://xboxlive.com",
-            "TokenType": "JWT",
-            "Properties": {
-                "UserTokens": [user_token],
-                "SandboxId": "RETAIL",
-            }
-        }), headers={'Content-Type': 'application/json'})
+        resp = self.XboxLiveAuthorizeRequest(user_token)
 
         response = resp.json()
         self.AUTHORIZATION_HEADER = 'XBL3.0 x=%s;%s' % (uhs, response['Token'])
+        self.live_refresh_token = live_refresh_token
         self.user_xid = response['DisplayClaims']['xui'][0]['xid']
+        self.user_hash = uhs
+
+        self.user_token = user_token
+        self.user_issued = json_data['IssueInstant']
+        self.user_valid_until = json_data['NotAfter']
+
+        self.xsts_token = response['Token']
+        self.xsts_issued = response['IssueInstant']
+        self.xsts_valid_until = response['NotAfter']
+
         self.authenticated = True
         return self
 
