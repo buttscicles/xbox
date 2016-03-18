@@ -80,6 +80,13 @@ class Client(object):
         return self._post(url, **kw)
 
     def WindowsLiveTokenRefresh(self, refresh_token):
+        '''
+        Refreshes the Windows Live Token
+        
+        :param refresh_token: Refresh Token from a previous Windows Live Auth
+
+        :returns: The request-response of HTTP-GET
+        '''
         base_url = 'https://login.live.com/oauth20_token.srf?'
         qs = unquote(urlencode({
             'grant_type': 'refresh_token',
@@ -91,6 +98,14 @@ class Client(object):
         return resp
 
     def WindowsLiveRequest(self, login, password):
+        '''
+        Authenticates with Windows Live
+        
+        :param login: Microsoft account email-address
+        :param password: corresponding password
+
+        :returns: The response of HTTP-POST
+        '''
         # firstly we have to GET the login page and extract
         # certain data we need to include in our POST request.
         # sadly the data is locked away in some javascript code
@@ -138,6 +153,13 @@ class Client(object):
         return resp
 
     def XboxLiveAuthenticateRequest(self, access_token):
+        '''
+        Authenticates with Xbox Live
+        
+        :param access_token: Token from the WindowsLiveAuthentication
+
+        :returns: The response of HTTP-POST
+        '''
         url = 'https://user.auth.xboxlive.com/user/authenticate'
         resp = self.session.post(url, data=json.dumps({
             "RelyingParty": "http://auth.xboxlive.com",
@@ -151,6 +173,13 @@ class Client(object):
         return resp
 
     def XboxLiveAuthorizeRequest(self, user_token):
+        '''
+        Authorizes with Xbox Live
+        
+        :param user_token: Token from the XboxLiveAuthentication
+
+        :returns: The response of HTTP-POST
+        '''
         url = 'https://xsts.auth.xboxlive.com/xsts/authorize'
         resp = self.session.post(url, data=json.dumps({
             "RelyingParty": "http://xboxlive.com",
